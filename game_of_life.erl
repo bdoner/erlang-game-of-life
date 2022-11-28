@@ -1,13 +1,13 @@
 -module(game_of_life).
--export([run/0]).
+-export([run/0, cell_printer/0]).
 
 -import(term, [pos/1]).
 
 -record(coord, {x, y}).
 -record(cell, {coord=#coord{}, state, changed}).
 
--define(Width, 80).
--define(Height, 40).
+-define(Width, 60).
+-define(Height, 30).
 
 
 wrap({X, Y}) when X < 0 -> wrap({?Width + X, Y});
@@ -18,10 +18,7 @@ wrap({X, Y}) -> {X, Y}.
 
 
 update_cell(Cell, Board) ->
-    {_, X, Y} = Cell#cell.coord,
-    %io:format("update_cell/2: Cell -> ~p~n---------~n", [Cell]),
     N = get_neighbours(Cell#cell.coord, Board),
-    %io:format("update_cell/2: N -> ~p~n", [N]),
     S = get_score(N),
     NS =
         if Cell#cell.state ->
@@ -36,12 +33,8 @@ update_cell(Cell, Board) ->
                 _ -> false
             end
         end,
-    %io:format("get_neighbours/2: S -> ~p~n", [S]),
-    %io:format("get_neighbours/2: SN -> ~p~n---------~n", [NS]),
 
-    C = #cell{coord=#coord{x=X, y=Y}, state=NS, changed=Cell#cell.state/=NS},
-    %io:format("~p~n", [C]),
-    C.
+    Cell#cell{state=NS, changed=Cell#cell.state/=NS}.
 
 
 get_neighbours(Coord, Board) ->
@@ -51,9 +44,6 @@ get_neighbours(Coord, Board) ->
         wrap({X-1, Y}),                   wrap({X+1, Y}), 
         wrap({X-1, Y+1}), wrap({X, Y+1}), wrap({X+1, Y+1})
     ],
-    %io:format("get_neighbours/2: length(Board) -> ~p~n", [length(Board)]),
-    %io:format("get_neighbours/2: Coord -> ~p~n----~n", [Coord]),
-    %io:format("get_neighbours/2: N -> ~p~n---------~n", [N]),
     lists:map(fun(C) -> lists:nth(get_pos(C), Board) end, N).
 
 
@@ -65,14 +55,10 @@ get_coord(PI) when is_number(PI) ->
     P = PI - 1,
     X = P rem ?Width,
     Y = trunc((P - X) / ?Width),
-    %io:format("get_coord/1: P -> ~p~n", [P]),
-    %io:format("get_coord/1: #coord{x, y} -> ~p~n---------~n", [#coord{x=X, y=Y}]),
     #coord{x=X, y=Y}.
 
 
 get_pos({X, Y}) ->
-    %io:format("get_pos/1: {X, Y} -> ~p~n", [{X, Y}]),
-    %io:format("get_pos/1: (?Width * Y + X) + 1 -> ~p~n---------~n", [(?Width * Y + X) + 1]),
     (?Width * Y + X) + 1.
 
 
@@ -84,22 +70,32 @@ print_cell(Cell) ->
     State = Cell#cell.state,
     term:pos({Coord#coord.x, Coord#coord.y}),
     io:format("~s", [state_char(State)]).
-    %io:format("~p~n", [Cell]).
+
+cell_printer() ->
+    receive
+        {paint, C} ->
+            %io:format("Printing cell at ~p, state is ~p~n", [C#cell.coord, C#cell.state]),
+            print_cell(C),
+            cell_printer();
+        {stop} ->
+            io:format("Printer shutting down...~n", []),
+            ok
+    end. 
+
+print_board(Board, Printer) ->
+    Ch = [C ||C <- Board, C#cell.changed],
+    %io:format("Queueing ~B changed cells for updates~n", [length(Ch)]),
+    lists:foreach(fun(C) -> Printer ! {paint, C} end, Ch).
+    %io:format("Done queueing~n", []).
 
 
-print_board(Board) ->
-    lists:foreach(fun(C) -> print_cell(C) end, [C ||C <- Board, C#cell.changed]).
-
-
-loop(_, 0) -> ok;
-loop(Board, N) ->
-    %io:format("loop/1~n"),
-    %io:format("~p~n---------~n",[Board]),
-    print_board(Board),
+loop(_, _, 0) -> ok;
+loop(Board, Printer, N) ->
+    print_board(Board, Printer),
 
     B = lists:map(fun(C) -> update_cell(C, Board) end, [B#cell{changed=false} || B <- Board]),
     %timer:sleep(24),
-    loop(B, N - 1).
+    loop(B, Printer, N - 1).
 
 
 rnd_board() ->
@@ -111,6 +107,7 @@ print_border_vline(N) ->
     io:format("~tc~ts~tc~n", [$│, lists:duplicate(?Width, hd(" ")), $│]),
     print_border_vline(N-1).
     
+
 print_border() -> 
     io:format("┌"),
     io:format("~ts", [lists:duplicate(?Width, hd("─"))]),
@@ -124,9 +121,15 @@ print_border() ->
 
 
 run() ->
+    Printer = spawn(?MODULE, cell_printer, []),
+    io:format("Printer Pid: ~p~n", [Printer]),
+    timer:sleep(1000),
+    
     term:enter_alt(true),
     print_border(),
     Board = rnd_board(),
-    loop(Board, 200),
+    loop(Board, Printer, 200),
     term:enter_alt(false),
-    ok.
+    
+    Printer ! {stop},
+    fin.
